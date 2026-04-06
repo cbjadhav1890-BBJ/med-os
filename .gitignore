@@ -1,0 +1,4 @@
+medos.db
+node_modules/
+.env
+dist/
