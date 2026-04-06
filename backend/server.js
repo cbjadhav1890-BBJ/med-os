@@ -154,6 +154,10 @@ async function setupSchema() {
   const hasEncCol = await knex.schema.hasColumn('appointments', 'encounter_id');
   if (!hasEncCol) await knex.schema.table('appointments', t => t.string('encounter_id'));
 
+  // Migration: add payment_mode to invoices if missing
+  const hasInvPayMode = await knex.schema.hasColumn('invoices', 'payment_mode');
+  if (!hasInvPayMode) await knex.schema.table('invoices', t => t.string('payment_mode').defaultTo('Cash'));
+
   // 7. PRESCRIPTIONS
   if (!await has('prescriptions')) await knex.schema.createTable('prescriptions', t => {
     t.string('id').primary();
@@ -555,6 +559,27 @@ async function seed() {
 app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000', credentials:true }));
 app.use(express.json({ limit:'10mb' }));
 
+// Prevent unhandled promise rejections from crashing the process
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason?.message || reason);
+});
+
+// Auto-wrap ALL async route handlers so errors return HTTP 500 instead of crashing the server
+['get','post','put','patch','delete'].forEach(method => {
+  const orig = app[method].bind(app);
+  app[method] = (...args) => {
+    const wrapped = args.map(fn =>
+      (typeof fn === 'function' && fn.constructor.name === 'AsyncFunction')
+        ? (req, res, next) => fn(req, res, next).catch(err => {
+            console.error(`[${method.toUpperCase()} ${typeof args[0]==='string'?args[0]:'?'}]`, err.message);
+            if (!res.headersSent) res.status(500).json({ error: err.message });
+          })
+        : fn
+    );
+    return orig(...wrapped);
+  };
+});
+
 async function auditLog(userId, username, role, action, entityType, entityId, details) {
   try { await knex('audit_log').insert({ id:uuidv4(), user_id:userId||'', username, user_role:role||'', action, entity_type:entityType||'', entity_id:entityId||'', details:JSON.stringify(details||{}) }); } catch {}
 }
@@ -698,8 +723,8 @@ app.get('/api/patients/:id', auth, async (req,res) => {
 app.post('/api/patients', auth, can('reception','admin','doctor','nurse'), async (req,res) => {
   const { name,age,gender,dob,phone,email,address,city,state,pincode,blood_group,allergies,abha_id,emergency_contact_name,emergency_contact_phone,insurance_provider,insurance_policy_no,dpdp_consent,dpdp_purpose } = req.body;
   if (!name||!phone) return res.status(400).json({ error:'Name and phone required' });
-  const last = await knex('patients').orderBy('created_at','desc').first();
-  let num=1001; if (last) { const m=last.uhid.match(/\d+$/); if(m) num=parseInt(m[0])+1; }
+  const [mx] = await knex('patients').select(knex.raw("MAX(CAST(REPLACE(uhid,'UHID-','') AS INTEGER)) as maxNum"));
+  const num = (mx.maxNum||1000)+1;
   const id=uuidv4(), uhid=`UHID-${String(num).padStart(4,'0')}`;
   await knex('patients').insert({ id,uhid,name,age:age||null,gender:gender||null,dob:dob||'',phone,email:email||'',address:address||'',city:city||'',state:state||'',pincode:pincode||'',blood_group:blood_group||'',allergies:allergies||'',abha_id:abha_id||'',emergency_contact_name:emergency_contact_name||'',emergency_contact_phone:emergency_contact_phone||'',insurance_provider:insurance_provider||'',insurance_policy_no:insurance_policy_no||'',dpdp_consent:dpdp_consent?1:0,dpdp_consent_date:dpdp_consent?new Date().toISOString():'',dpdp_purpose:dpdp_purpose||'',created_by:req.user.id });
   await auditLog(req.user.id,req.user.username,req.user.role,'REGISTER_PATIENT','patient',id,{name,uhid});
@@ -1084,7 +1109,7 @@ app.get('/api/invoices', auth, can('billing','admin'), async (req,res) => {
 });
 
 app.post('/api/invoices', auth, can('billing','admin'), async (req,res) => {
-  const { patient_id, charge_ids, discount, payment_mode, notes, encounter_id, admission_id } = req.body;
+  const { patient_id, charge_ids, discount, payment_mode='Cash', notes, encounter_id, admission_id } = req.body;
   if (!patient_id||!charge_ids?.length) return res.status(400).json({ error:'patient_id and charge_ids required' });
 
   const charges = await knex('charges').whereIn('id',charge_ids).where({patient_id,status:'pending'});
@@ -1108,7 +1133,7 @@ app.post('/api/invoices', auth, can('billing','admin'), async (req,res) => {
   const inv_no = `INV-${new Date().getFullYear()}-${String(Number(cnt)+1).padStart(5,'0')}`;
   const id = uuidv4();
 
-  await knex('invoices').insert({ id, invoice_no:inv_no, patient_id, encounter_id:encounter_id||null, admission_id:admission_id||null, line_items:JSON.stringify(charges), subtotal, discount:disc, gst_breakup:JSON.stringify(gstBreakup), gst_total:gstTotal, total_amount:total, amount_paid:0, amount_due:total, payment_status:'pending', notes:notes||'', created_by:req.user.id });
+  await knex('invoices').insert({ id, invoice_no:inv_no, patient_id, encounter_id:encounter_id||null, admission_id:admission_id||null, line_items:JSON.stringify(charges), subtotal, discount:disc, gst_breakup:JSON.stringify(gstBreakup), gst_total:gstTotal, total_amount:total, amount_paid:0, amount_due:total, payment_status:'pending', payment_mode:payment_mode||'Cash', notes:notes||'', created_by:req.user.id });
   await knex('charges').whereIn('id',charge_ids).update({ status:'invoiced', invoice_id:id });
   await syncPatientBalance(patient_id);
 
@@ -1290,7 +1315,7 @@ app.post('/api/expenses', auth, can('admin','billing'), async (req,res) => {
 // ══════════════════════════════════════════════════════════════════════════════
 // REPORTS
 // ══════════════════════════════════════════════════════════════════════════════
-app.get('/api/reports/financial', auth, can('admin','billing'), async (req,res) => {
+app.get('/api/reports/financial', auth, can('admin','billing'), async (req,res) => { try {
   const { from, to } = req.query;
   const f = from||new Date(Date.now()-30*86400000).toISOString().slice(0,10);
   const t = to||new Date().toISOString().slice(0,10);
@@ -1317,18 +1342,18 @@ app.get('/api/reports/financial', auth, can('admin','billing'), async (req,res) 
   const netProfit      = totalCollected - totalExpenses;
 
   res.json({ from:f, to:t, summary:{ gross_revenue:grossRevenue, total_collected:totalCollected, outstanding_dues:outstanding.t||0, total_expenses:totalExpenses, net_profit:netProfit, profit_margin:totalCollected>0?((netProfit/totalCollected)*100).toFixed(1):0, invoice_count:invoiceCount.c, new_patients:patientCount.c }, top_services:topServices, daily_revenue:dailyRev, payment_modes:payModeSplit });
-});
+} catch(e) { console.error('reports/financial:', e.message); res.status(500).json({ error: e.message }); } });
 
-app.get('/api/reports/stock', auth, can('admin','pharmacist'), async (req,res) => {
+app.get('/api/reports/stock', auth, can('admin','pharmacist'), async (req,res) => { try {
   const [total, lowStock, expiringSoon, outOfStock, totalValue] = await Promise.all([
     knex('medicine_catalog').where({is_active:1}).count('id as c').first(),
     knex('medicine_catalog').whereRaw('current_stock <= reorder_level AND current_stock > 0 AND is_active=1').select('id','name','category','current_stock','reorder_level'),
     knex('stock_batches').where('quantity_remaining','>',0).whereRaw("expiry_date <= date('now','+90 days')").join('medicine_catalog as m','stock_batches.medicine_id','m.id').select('stock_batches.*','m.name as medicine_name','m.category').orderBy('expiry_date','asc'),
     knex('medicine_catalog').where({current_stock:0,is_active:1}).select('id','name','category'),
-    knex('stock_batches').where('quantity_remaining','>',0).join('medicine_catalog as m','stock_batches.medicine_id','m.id').sum(knex.raw('stock_batches.quantity_remaining * m.selling_price as t')).first(),
+    knex('stock_batches').where('quantity_remaining','>',0).join('medicine_catalog as m','stock_batches.medicine_id','m.id').select(knex.raw('SUM(stock_batches.quantity_remaining * m.selling_price) as t')).first(),
   ]);
   res.json({ total_medicines:total.c, low_stock:lowStock, expiring_soon:expiringSoon, out_of_stock:outOfStock, inventory_value:totalValue.t||0 });
-});
+} catch(e) { console.error('reports/stock:', e.message); res.status(500).json({ error: e.message }); } });
 
 // ══════════════════════════════════════════════════════════════════════════════
 // ICD-10 SEARCH

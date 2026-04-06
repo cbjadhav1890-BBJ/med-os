@@ -41,7 +41,7 @@ function EncounterDetail({ enc: initEnc, onUpdate, toast }) {
   const [enc, setEnc] = useState(initEnc)
   const [tab, setTab] = useState('vitals')
   const [vitals, setVitals] = useState(() => { try { return JSON.parse(initEnc.vitals_json||'{}') } catch { return {} } })
-  const [notes, setNotes] = useState({ history: initEnc.history||'', examination: initEnc.examination||'', chief_complaint: initEnc.chief_complaint||'' })
+  const [notes, setNotes] = useState({ history: initEnc.history||'', examination: initEnc.examination||'', chief_complaint: initEnc.chief_complaint||'', follow_up_date: initEnc.follow_up_date||'' })
   const [icd10, setIcd10] = useState(() => { try { return JSON.parse(initEnc.icd10_codes||'[]') } catch { return [] } })
   const [aiNote, setAiNote] = useState(initEnc.ai_note||'')
   const [transcript, setTranscript] = useState('')
@@ -54,7 +54,7 @@ function EncounterDetail({ enc: initEnc, onUpdate, toast }) {
   const [signing, setSigning] = useState(false)
   const { user } = useAuthStore()
 
-  useEffect(() => { setEnc(initEnc); setVitals(()=>{ try{return JSON.parse(initEnc.vitals_json||'{}')}catch{return {}} }); setNotes({ history:initEnc.history||'', examination:initEnc.examination||'', chief_complaint:initEnc.chief_complaint||'' }); setIcd10(()=>{ try{return JSON.parse(initEnc.icd10_codes||'[]')}catch{return []} }); setAiNote(initEnc.ai_note||''); setPrescriptions(initEnc.prescriptions||[]); setOrders(initEnc.orders||[]) }, [initEnc])
+  useEffect(() => { setEnc(initEnc); setVitals(()=>{ try{return JSON.parse(initEnc.vitals_json||'{}')}catch{return {}} }); setNotes({ history:initEnc.history||'', examination:initEnc.examination||'', chief_complaint:initEnc.chief_complaint||'', follow_up_date:initEnc.follow_up_date||'' }); setIcd10(()=>{ try{return JSON.parse(initEnc.icd10_codes||'[]')}catch{return []} }); setAiNote(initEnc.ai_note||''); setPrescriptions(initEnc.prescriptions||[]); setOrders(initEnc.orders||[]) }, [initEnc])
 
   const signed = enc.status==='signed'
 
@@ -229,8 +229,8 @@ function EncounterDetail({ enc: initEnc, onUpdate, toast }) {
               </div></div>
             )}
             {icd10.length===0 && <div className="empty-state"><div className="empty-state-icon">🏷</div><div className="empty-state-title">No diagnoses added</div><div className="empty-state-desc">Search and add ICD-10 codes</div></div>}
-            {!signed && enc.follow_up_date !== undefined && (
-              <div className="form-group"><label className="form-label">Follow-up Date</label><input type="date" className="input" style={{ maxWidth:200 }} value={vitals.follow_up||''} onChange={e=>setVitals(v=>({...v,follow_up:e.target.value}))} /></div>
+            {!signed && (
+              <div className="form-group"><label className="form-label">Follow-up Date</label><input type="date" className="input" style={{ maxWidth:200 }} value={notes.follow_up_date||''} onChange={e=>setNotes(n=>({...n,follow_up_date:e.target.value}))} /></div>
             )}
           </div>
         )}
