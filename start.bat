@@ -21,6 +21,9 @@ if not exist "frontend\node_modules" (
     echo Done.
 )
 
+echo Stopping any existing MedOS processes...
+taskkill /F /IM node.exe >nul 2>&1
+
 echo [3/4] Starting backend on port 3001...
 start "MedOS Backend" cmd /k "cd /d %~dp0backend && node server.js"
 
