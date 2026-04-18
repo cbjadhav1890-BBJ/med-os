@@ -8,6 +8,9 @@ const jwt      = require('jsonwebtoken');
 const bcrypt   = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const path     = require('path');
+const multer   = require('multer');
+const pdfParse = require('pdf-parse');
+const upload   = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 const app        = express();
 const PORT       = process.env.PORT || 3001;
@@ -1516,6 +1519,81 @@ app.get('/api/health', async (_,res) => {
   const counts = {};
   for (const t of tables) { const [r] = await knex(t).count('id as c'); counts[t]=r.c; }
   res.json({ status:'ok', version:'3.0-god-mode', db:'medos.db', tables:counts, time:new Date().toISOString() });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AI PDF REPORT ENGINE
+// ══════════════════════════════════════════════════════════════════════════════
+app.post('/api/reports/analyze-pdf', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No PDF file uploaded.' });
+  if (req.file.mimetype !== 'application/pdf') return res.status(400).json({ error: 'Only PDF files are allowed.' });
+
+  const aiProvider = req.headers['x-ai-provider'] || 'anthropic';
+  const customKey = req.headers['x-ai-key'] || '';
+  const finalKey = customKey || (aiProvider === 'anthropic' ? ANTHROPIC : '');
+
+  if (!finalKey) {
+    const mockHtml = `
+      <h3 style="color:var(--primary); margin-top:0;">Mock Analysis Mode</h3> 
+      <p>This is a simulated response because no API Key was configured for ${aiProvider === 'openai' ? 'OpenAI' : 'Anthropic'}. Please add your key in the System Administration tab!</p>
+      <h3 style="color:var(--success);">The Good (Normal/Positive)</h3> 
+      <ul><li>Hemoglobin levels are stable at 14.2 g/dL</li><li>Blood pressure is securely within normal ranges</li></ul>
+      <h3 style="color:var(--danger);">The Bad (Abnormal/Risks)</h3> 
+      <ul><li>Slightly elevated LDL Cholesterol detected (135 mg/dL)</li></ul>
+      <h3 style="color:var(--warning);">Recommendations</h3> 
+      <ul><li>Implement cardiovascular dietary changes</li><li>Re-run lipid panel in 4 weeks</li></ul>
+    `;
+    return new Promise(resolve => setTimeout(() => {
+      res.json({ html: mockHtml });
+      resolve();
+    }, 2500));
+  }
+
+  try {
+    const pdfData = await pdfParse(req.file.buffer);
+    const textLimit = pdfData.text.slice(0, 15000); 
+
+    const systemPrompt = `You are an expert AI clinical assistant. Analyze this medical/diagnostic report. Extract key findings and categorize them clearly.
+Format your entire response strictly as beautifully formatted HTML. Do NOT wrap it in markdown code blocks (\`\`\`html).
+Output these sections:
+1. <h3 style="color:var(--primary); margin-top:0;">Key Findings</h3> <p>...</p>
+2. <h3 style="color:var(--success);">The Good (Normal/Positive)</h3> <ul>...</ul>
+3. <h3 style="color:var(--danger);">The Bad (Abnormal/Risks)</h3> <ul>...</ul>
+4. <h3 style="color:var(--warning);">Recommendations</h3> <ul>...</ul>`;
+
+    if (aiProvider === 'openai') {
+      const r = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${finalKey}` },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `Report text:\n${textLimit}` }
+          ]
+        })
+      });
+      if (!r.ok) { const err = await r.json(); throw new Error(err.error?.message || 'OpenAI failed'); }
+      const data = await r.json();
+      res.json({ html: data.choices[0].message.content });
+
+    } else {
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': finalKey, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({
+          model: 'claude-3-haiku-20240307',
+          max_tokens: 1500,
+          messages: [{ role: 'user', content: systemPrompt + `\n\nReport text:\n${textLimit}` }]
+        })
+      });
+      if (!r.ok) { const err = await r.json(); throw new Error(err.error?.message || 'Anthropic failed'); }
+      const data = await r.json();
+      res.json({ html: data.content[0].text });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to analyze PDF: ' + error.message });
+  }
 });
 
 // ══════════════════════════════════════════════════════════════════════════════

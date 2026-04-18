@@ -101,6 +101,11 @@ export default function Admin() {
   const [editUser, setEditUser] = useState(null)
   const [logOffset, setLogOffset] = useState(0)
   const [logTotal, setLogTotal] = useState(0)
+  
+  // AI Settings State
+  const [aiProvider, setAiProvider] = useState(localStorage.getItem('AI_PROVIDER') || 'anthropic')
+  const [aiKey, setAiKey] = useState(localStorage.getItem('AI_KEY') || '')
+  
   const toast = useContext(ToastContext)
   const LOG_LIMIT = 50
 
@@ -244,6 +249,52 @@ export default function Admin() {
 
       {tab==='system' && (
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:20 }}>
+          <div className="card" style={{ gridColumn:'1/-1' }}>
+            <div className="card-header"><span style={{ fontSize:16 }}>🧠</span><div><div className="card-title">Global AI Engine Configuration</div><div className="card-subtitle">Connect MedOS to Anthropic or OpenAI to power clinical analysis apps</div></div></div>
+            <div className="card-body" style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: 'block', marginBottom: 8, fontSize: 13, fontWeight: 600, color: 'var(--text-white)' }}>Select AI Provider</label>
+                <select className="input" value={aiProvider} onChange={e => setAiProvider(e.target.value)} style={{ width: '100%', marginBottom: 16 }}>
+                   <option value="anthropic">Anthropic (Claude 3 Haiku)</option>
+                   <option value="openai">OpenAI (ChatGPT-4o-mini)</option>
+                </select>
+                
+                <label style={{ display: 'block', marginBottom: 8, fontSize: 13, fontWeight: 600, color: 'var(--text-white)' }}>Enter Secret API Key</label>
+                <input 
+                  type="password" 
+                  className="input" 
+                  value={aiKey} 
+                  onChange={e => setAiKey(e.target.value)} 
+                  placeholder={aiProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'} 
+                  style={{ width: '100%', marginBottom: 16 }} 
+               />
+               <button className="btn btn-primary" onClick={() => {
+                   localStorage.setItem('AI_PROVIDER', aiProvider);
+                   localStorage.setItem('AI_KEY', aiKey);
+                   toast('Globally connected to ' + (aiProvider==='openai'?'ChatGPT':'Claude'), 'success');
+               }}>Save AI Configuration</button>
+              </div>
+              <div style={{ flex: 1, background: 'var(--surface-2)', padding: 16, borderRadius: 12, border: '1px solid var(--border)' }}>
+                 <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 8 }}>How to generate your key:</div>
+                 {aiProvider === 'openai' ? (
+                   <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5 }}>
+                     1. Go to <a href="https://platform.openai.com/api-keys" target="_blank" style={{ color: 'var(--primary)' }}>platform.openai.com/api-keys</a><br/>
+                     2. Create a new secret key.<br/>
+                     3. Make sure your account has a billing method attached.<br/>
+                     4. Paste it here. Your key is stored securely in your browser and never saved to our database.
+                   </div>
+                 ) : (
+                   <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5 }}>
+                     1. Go to <a href="https://console.anthropic.com/settings/keys" target="_blank" style={{ color: 'var(--primary)' }}>console.anthropic.com/settings/keys</a><br/>
+                     2. Click "Create Key".<br/>
+                     3. Add credits to your Anthropic billing account.<br/>
+                     4. Paste it here. Your key is stored securely in your browser and never saved to our database.
+                   </div>
+                 )}
+              </div>
+            </div>
+          </div>
+
           <div className="card">
             <div className="card-header"><span style={{ fontSize:16 }}>🔒</span><div><div className="card-title">DPDP Compliance</div></div></div>
             <div className="card-body">
