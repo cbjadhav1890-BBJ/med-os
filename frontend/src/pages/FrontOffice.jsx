@@ -52,7 +52,18 @@ function PatientForm({ onClose, onCreated, toast }) {
                   <input className="input" value={form.name} onChange={e=>set('name',e.target.value)} placeholder="Patient's full name" required />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Age</label>
+                  <label className="form-label">Date of Birth</label>
+                  <input className="input" type="date" value={form.dob||''} onChange={e=>{
+                    const dob = e.target.value;
+                    set('dob', dob);
+                    if (dob) {
+                      const age = Math.floor((Date.now() - new Date(dob).getTime()) / (365.25*24*60*60*1000));
+                      if (age >= 0 && age <= 150) set('age', age);
+                    }
+                  }} max={new Date().toISOString().slice(0,10)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Age <span style={{ fontSize:10, color:'var(--text-3)' }}>(auto from DOB)</span></label>
                   <input className="input" type="number" value={form.age} onChange={e=>set('age',e.target.value)} placeholder="Age in years" min="0" max="150" />
                 </div>
                 <div className="form-group">

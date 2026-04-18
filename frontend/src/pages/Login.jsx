@@ -1,14 +1,15 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import api from '../api/client'
 import { useAuthStore } from '../store/authStore'
+import api from '../api/client'
 
-const DEMO_USERS = [
-  { label: 'Admin',      user: 'admin',      pass: 'admin123',   role: 'Full access', color: '#7C3AED' },
-  { label: 'Doctor',     user: 'drpriya',    pass: 'doctor123',  role: 'OPD + Notes', color: '#2563EB' },
-  { label: 'Reception',  user: 'reception1', pass: 'recep123',   role: 'Front Office',color: '#0891B2' },
-  { label: 'Nurse',      user: 'nurse1',     pass: 'nurse123',   role: 'OPD + Queue', color: '#059669' },
-  { label: 'Billing',    user: 'billing1',   pass: 'billing123', role: 'Billing only',color: '#D97706' },
+const DEMOS = [
+  { label: 'Admin', u: 'admin', p: 'admin123', icon: '⚙️' },
+  { label: 'Doctor', u: 'drpriya', p: 'doctor123', icon: '🩺' },
+  { label: 'Reception', u: 'reception1', p: 'recep123', icon: '🏢' },
+  { label: 'Nurse', u: 'nurse1', p: 'nurse123', icon: '💉' },
+  { label: 'Billing', u: 'billing1', p: 'billing123', icon: '💳' },
+  { label: 'Pharmacy', u: 'pharma1', p: 'pharma123', icon: '💊' },
 ]
 
 export default function Login() {
@@ -16,14 +17,13 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const { login } = useAuthStore()
   const navigate = useNavigate()
+  const { login } = useAuthStore()
 
-  async function handleLogin(e) {
-    e.preventDefault()
+  async function handleLogin(u, p) {
     setError(''); setLoading(true)
     try {
-      const { data } = await api.post('/auth/login', { username, password })
+      const { data } = await api.post('/auth/login', { username: u || username, password: p || password })
       login(data.token, data.user)
       navigate('/dashboard')
     } catch (err) {
@@ -31,74 +31,65 @@ export default function Login() {
     } finally { setLoading(false) }
   }
 
-  function fillUser(u) { setUsername(u.user); setPassword(u.pass); setError('') }
-
   return (
-    <div style={{ minHeight:'100vh', background:'linear-gradient(135deg,#0F172A 0%,#1E3A5F 50%,#1E1B4B 100%)', display:'flex', alignItems:'center', justifyContent:'center', padding:20, position:'relative', overflow:'hidden' }}>
-      {/* Decorative blobs */}
-      <div style={{ position:'absolute', width:400, height:400, borderRadius:'50%', background:'rgba(37,99,235,0.15)', filter:'blur(80px)', top:-100, right:-100, pointerEvents:'none' }} />
-      <div style={{ position:'absolute', width:300, height:300, borderRadius:'50%', background:'rgba(124,58,237,0.1)', filter:'blur(60px)', bottom:-80, left:-80, pointerEvents:'none' }} />
+    <div className="login-page">
+      {/* Floating particles */}
+      {[...Array(6)].map((_, i) => (
+        <div key={i} className="glow-orb" style={{
+          width: 60 + i * 40, height: 60 + i * 40,
+          background: i % 3 === 0 ? 'var(--primary)' : i % 3 === 1 ? 'var(--purple)' : 'var(--cyan)',
+          top: `${10 + i * 15}%`, left: `${5 + i * 16}%`,
+          animation: `loginOrb${(i % 2) + 1} ${12 + i * 3}s ease-in-out infinite`,
+          animationDelay: `${i * -2}s`,
+        }} />
+      ))}
 
-      <div style={{ width:'100%', maxWidth:440, position:'relative', zIndex:1 }}>
-        {/* Logo */}
-        <div style={{ textAlign:'center', marginBottom:32 }}>
-          <div style={{ width:64, height:64, background:'linear-gradient(135deg,#2563EB,#7C3AED)', borderRadius:20, display:'inline-flex', alignItems:'center', justifyContent:'center', fontSize:28, marginBottom:16, boxShadow:'0 8px 32px rgba(37,99,235,0.4)' }}>🏥</div>
-          <div style={{ fontSize:28, fontWeight:800, color:'white', letterSpacing:-0.5 }}>MedOS</div>
-          <div style={{ fontSize:13, color:'rgba(255,255,255,0.5)', marginTop:4 }}>Hospital Management System</div>
+      <div className="login-card">
+        <div className="login-brand">
+          <div className="login-brand-icon">🏥</div>
+          <div className="login-brand-name">MedOS</div>
+          <div className="login-brand-sub">Hospital Management System</div>
         </div>
 
-        {/* Card */}
-        <div style={{ background:'rgba(255,255,255,0.03)', backdropFilter:'blur(20px)', border:'1px solid rgba(255,255,255,0.1)', borderRadius:24, padding:32, boxShadow:'0 32px 64px rgba(0,0,0,0.4)' }}>
-          <div style={{ fontSize:18, fontWeight:700, color:'white', marginBottom:4 }}>Sign in to your account</div>
-          <div style={{ fontSize:13, color:'rgba(255,255,255,0.4)', marginBottom:24 }}>Role-based access · Secure · DPDP compliant</div>
+        {error && (
+          <div style={{
+            background: 'var(--danger-bg)', border: '1px solid rgba(239,68,68,0.2)',
+            borderRadius: 10, padding: '10px 14px', marginBottom: 16,
+            fontSize: 13, color: 'var(--danger-light)', display: 'flex', alignItems: 'center', gap: 8
+          }}>
+            <span>❌</span> {error}
+          </div>
+        )}
 
-          {error && (
-            <div style={{ background:'rgba(220,38,38,0.15)', border:'1px solid rgba(220,38,38,0.3)', borderRadius:10, padding:'10px 14px', color:'#FCA5A5', fontSize:13, marginBottom:16 }}>
-              {error}
-            </div>
-          )}
+        <form className="login-form" onSubmit={e => { e.preventDefault(); handleLogin() }}>
+          <div className="login-input-group">
+            <label>Username</label>
+            <input type="text" value={username} onChange={e => setUsername(e.target.value)}
+              placeholder="Enter username" autoFocus required />
+          </div>
+          <div className="login-input-group">
+            <label>Password</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+              placeholder="Enter password" required />
+          </div>
+          <button type="submit" className="login-btn" disabled={loading}>
+            {loading ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white' }} /> Signing in…</> : '→ Sign In'}
+          </button>
+        </form>
 
-          <form onSubmit={handleLogin} style={{ display:'flex', flexDirection:'column', gap:14 }}>
-            <div>
-              <label style={{ fontSize:12, fontWeight:600, color:'rgba(255,255,255,0.6)', display:'block', marginBottom:6 }}>Username</label>
-              <input value={username} onChange={e=>setUsername(e.target.value)} placeholder="Enter username" required autoFocus
-                style={{ width:'100%', padding:'10px 14px', background:'rgba(255,255,255,0.07)', border:'1.5px solid rgba(255,255,255,0.1)', borderRadius:10, color:'white', fontSize:14, outline:'none', transition:'border 0.15s', fontFamily:'inherit' }}
-                onFocus={e=>e.target.style.borderColor='rgba(37,99,235,0.8)'}
-                onBlur={e=>e.target.style.borderColor='rgba(255,255,255,0.1)'}
-              />
-            </div>
-            <div>
-              <label style={{ fontSize:12, fontWeight:600, color:'rgba(255,255,255,0.6)', display:'block', marginBottom:6 }}>Password</label>
-              <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Enter password" required
-                style={{ width:'100%', padding:'10px 14px', background:'rgba(255,255,255,0.07)', border:'1.5px solid rgba(255,255,255,0.1)', borderRadius:10, color:'white', fontSize:14, outline:'none', transition:'border 0.15s', fontFamily:'inherit' }}
-                onFocus={e=>e.target.style.borderColor='rgba(37,99,235,0.8)'}
-                onBlur={e=>e.target.style.borderColor='rgba(255,255,255,0.1)'}
-              />
-            </div>
-            <button type="submit" disabled={loading}
-              style={{ width:'100%', padding:'12px', background:'linear-gradient(135deg,#2563EB,#1D4ED8)', border:'none', borderRadius:10, color:'white', fontSize:14, fontWeight:700, cursor:loading?'not-allowed':'pointer', opacity:loading?0.7:1, display:'flex', alignItems:'center', justifyContent:'center', gap:8, marginTop:4, fontFamily:'inherit' }}>
-              {loading ? <><span className="spinner spinner-sm" style={{borderTopColor:'white',borderColor:'rgba(255,255,255,0.3)'}}/>Signing in…</> : '→ Sign in'}
-            </button>
-          </form>
-
-          {/* Demo quick-access */}
-          <div style={{ marginTop:24 }}>
-            <div style={{ fontSize:11, fontWeight:600, color:'rgba(255,255,255,0.3)', textTransform:'uppercase', letterSpacing:1, marginBottom:10 }}>Quick Demo Login</div>
-            <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
-              {DEMO_USERS.map(u => (
-                <button key={u.user} onClick={() => fillUser(u)}
-                  style={{ padding:'5px 10px', background:'rgba(255,255,255,0.06)', border:`1px solid ${u.color}40`, borderRadius:8, color:'white', fontSize:11, fontWeight:600, cursor:'pointer', transition:'all 0.15s', fontFamily:'inherit' }}
-                  onMouseEnter={e => { e.target.style.background=`${u.color}25`; e.target.style.borderColor=u.color }}
-                  onMouseLeave={e => { e.target.style.background='rgba(255,255,255,0.06)'; e.target.style.borderColor=`${u.color}40` }}>
-                  {u.label}
-                </button>
-              ))}
-            </div>
+        <div className="demo-logins">
+          <div className="demo-logins-label">Quick Demo Login</div>
+          <div className="demo-logins-row">
+            {DEMOS.map(d => (
+              <button key={d.u} className="demo-btn" onClick={() => { setUsername(d.u); setPassword(d.p); handleLogin(d.u, d.p) }}>
+                {d.icon} {d.label}
+              </button>
+            ))}
           </div>
         </div>
 
-        <div style={{ textAlign:'center', marginTop:20, fontSize:12, color:'rgba(255,255,255,0.25)' }}>
-          v2.0 · Node.js + SQLite · JWT Auth · DPDP + GST Compliant
+        <div className="login-footer">
+          v3.0 · Node.js + SQLite · JWT Auth · DPDP + GST Compliant
         </div>
       </div>
     </div>

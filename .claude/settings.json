@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000)",
+      "Bash(node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const r=JSON.parse\\(d\\);console.log\\('Status:',r.status,'| Version:',r.version\\);console.log\\('Tables:'\\);Object.entries\\(r.tables\\).forEach\\(\\([t,c]\\)=>console.log\\(' ',t+':',c\\)\\)}\\)\")",
+      "Bash(node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const r=JSON.parse\\(d\\);console.log\\('Status:',r.status,'Version:',r.version\\);Object.entries\\(r.tables\\).forEach\\(\\([t,c]\\)=>console.log\\('  ',t+':',c,'rows'\\)\\)}\\)\")",
+      "Bash(node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const r=JSON.parse\\(d\\);console.log\\('Payment OK:',r.payment_no,'| Balance:',JSON.stringify\\(r.patient_balance\\)\\)}\\)\")",
+      "Bash(node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const r=JSON.parse\\(d\\);r.patients.slice\\(0,3\\).forEach\\(p=>console.log\\(p.uhid,p.name,'| billed:',p.total_billed,'paid:',p.total_paid,'outstanding:',p.outstanding\\)\\)}\\)\")",
+      "Bash(node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const r=JSON.parse\\(d\\);console.log\\('Revenue:',r.summary.gross_revenue,'Collected:',r.summary.total_collected,'Expenses:',r.summary.total_expenses,'Net:',r.summary.net_profit\\)}\\)\")",
+      "Bash(node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{try{console.log\\('Backend:',JSON.parse\\(d\\).status\\)}catch{console.log\\('Backend not responding'\\)}}\\)\")",
+      "Bash(curl -s -o /dev/null -w \"Frontend HTTP status: %{http_code}\" http://localhost:3000)",
+      "Bash(tasklist)",
+      "Bash(curl -s -X POST http://localhost:3001/api/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"admin\",\"password\":\"admin123\"}')",
+      "Bash(python -m json.tool)",
+      "Bash(curl -s -w \"\\\\nHTTP:%{http_code}\" http://localhost:3001/api/health echo \"\" tasklist)"
+    ]
+  }
+}

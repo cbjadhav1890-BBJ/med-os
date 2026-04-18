@@ -723,6 +723,10 @@ app.get('/api/patients/:id', auth, async (req,res) => {
 app.post('/api/patients', auth, can('reception','admin','doctor','nurse'), async (req,res) => {
   const { name,age,gender,dob,phone,email,address,city,state,pincode,blood_group,allergies,abha_id,emergency_contact_name,emergency_contact_phone,insurance_provider,insurance_policy_no,dpdp_consent,dpdp_purpose } = req.body;
   if (!name||!phone) return res.status(400).json({ error:'Name and phone required' });
+  if (age !== undefined && age !== '' && age !== null) {
+    const ageNum = Number(age);
+    if (isNaN(ageNum) || ageNum < 0 || ageNum > 150) return res.status(400).json({ error:'Age must be between 0 and 150' });
+  }
   const [mx] = await knex('patients').select(knex.raw("MAX(CAST(REPLACE(uhid,'UHID-','') AS INTEGER)) as maxNum"));
   const num = (mx.maxNum||1000)+1;
   const id=uuidv4(), uhid=`UHID-${String(num).padStart(4,'0')}`;
@@ -772,6 +776,8 @@ app.get('/api/appointments', auth, async (req,res) => {
 app.post('/api/appointments', auth, can('reception','admin','doctor','nurse'), async (req,res) => {
   const { patient_id,doctor_id,department_id,scheduled_date,scheduled_time,appointment_type,chief_complaint,notes } = req.body;
   if (!patient_id||!doctor_id||!scheduled_date||!scheduled_time) return res.status(400).json({ error:'patient_id, doctor_id, scheduled_date, scheduled_time required' });
+  const today = new Date().toISOString().slice(0,10);
+  if (scheduled_date < today) return res.status(400).json({ error:'Cannot book appointments in the past' });
   const no = await nextNo('appointments','appointment_no','APT-');
   const id = uuidv4();
   await knex('appointments').insert({ id, appointment_no:no, patient_id, doctor_id, department_id:department_id||null, scheduled_date, scheduled_time, appointment_type:appointment_type||'New', chief_complaint:chief_complaint||'', notes:notes||'', created_by:req.user.id });
@@ -1236,7 +1242,7 @@ app.get('/api/admissions', auth, async (req,res) => {
   res.json(await q.orderBy('a.created_at','desc').limit(100));
 });
 
-app.post('/api/admissions', auth, can('doctor','admin','reception'), async (req,res) => {
+app.post('/api/admissions', auth, can('doctor','admin','reception','nurse'), async (req,res) => {
   const { patient_id, doctor_id, department_id, room_id, bed_no, admission_diagnosis, notes } = req.body;
   if (!patient_id||!doctor_id) return res.status(400).json({ error:'patient_id and doctor_id required' });
 
@@ -1354,6 +1360,77 @@ app.get('/api/reports/stock', auth, can('admin','pharmacist'), async (req,res) =
   ]);
   res.json({ total_medicines:total.c, low_stock:lowStock, expiring_soon:expiringSoon, out_of_stock:outOfStock, inventory_value:totalValue.t||0 });
 } catch(e) { console.error('reports/stock:', e.message); res.status(500).json({ error: e.message }); } });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MEDICINE SUGGESTION — AI-powered or keyword-based
+// ══════════════════════════════════════════════════════════════════════════════
+const DISEASE_MEDICINE_MAP = {
+  'fever': ['Paracetamol 500mg','Dolo 650mg'],
+  'cold': ['Paracetamol 500mg','Azithromycin 500mg'],
+  'cough': ['Azithromycin 500mg','Paracetamol 500mg'],
+  'infection': ['Amoxicillin 500mg','Ciprofloxacin 500mg','Azithromycin 500mg'],
+  'diabetes': ['Metformin 500mg','Insulin Glargine'],
+  'hypertension': ['Amlodipine 5mg','Atorvastatin 10mg'],
+  'blood pressure': ['Amlodipine 5mg'],
+  'acidity': ['Pantoprazole 40mg'],
+  'gastri': ['Pantoprazole 40mg','ORS Sachet'],
+  'diarrh': ['ORS Sachet','Ciprofloxacin 500mg'],
+  'dehydra': ['ORS Sachet','NS 500ml IV'],
+  'cholesterol': ['Atorvastatin 10mg'],
+  'pain': ['Paracetamol 500mg','Dolo 650mg'],
+  'headache': ['Paracetamol 500mg','Dolo 650mg'],
+  'chest pain': ['Amlodipine 5mg','Atorvastatin 10mg'],
+  'respiratory': ['Azithromycin 500mg','Amoxicillin 500mg'],
+  'pneumonia': ['Amoxicillin 500mg','Azithromycin 500mg'],
+  'uti': ['Ciprofloxacin 500mg','Amoxicillin 500mg'],
+  'urinary': ['Ciprofloxacin 500mg'],
+  'back pain': ['Paracetamol 500mg','Dolo 650mg'],
+};
+
+app.post('/api/encounters/:id/suggest-medicines', auth, can('doctor','admin'), async (req,res) => {
+  const { disease_description } = req.body;
+  if (!disease_description) return res.status(400).json({ error:'disease_description required' });
+
+  const allMeds = await knex('medicine_catalog').where({ is_active:1 });
+
+  if (ANTHROPIC) {
+    try {
+      const medList = allMeds.map(m => `${m.name} (${m.generic_name}, ${m.category}, ${m.strength})`).join('\n');
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', 'x-api-key':ANTHROPIC, 'anthropic-version':'2023-06-01' },
+        body: JSON.stringify({
+          model:'claude-haiku-4-5-20251001', max_tokens:500,
+          messages:[{ role:'user', content:`You are a clinical decision support system. Given this condition: "${disease_description}", suggest the most appropriate medicines from this catalog:\n${medList}\n\nReturn ONLY a JSON array of medicine names that are appropriate. Example: ["Paracetamol 500mg","Amoxicillin 500mg"]` }]
+        })
+      });
+      const d = await r.json();
+      let suggested = [];
+      try { suggested = JSON.parse(d.content[0].text); } catch { suggested = []; }
+      const results = allMeds.filter(m => suggested.includes(m.name));
+      return res.json({ suggestions: results, ai_powered: true });
+    } catch(err) { /* fall through to keyword matching */ }
+  }
+
+  // Keyword-based fallback
+  const desc = disease_description.toLowerCase();
+  const matchedNames = new Set();
+  for (const [keyword, meds] of Object.entries(DISEASE_MEDICINE_MAP)) {
+    if (desc.includes(keyword)) meds.forEach(m => matchedNames.add(m));
+  }
+  // Also fuzzy match from catalog
+  allMeds.forEach(m => {
+    if (desc.includes(m.generic_name.toLowerCase()) || desc.includes(m.name.toLowerCase().split(' ')[0])) matchedNames.add(m.name);
+  });
+
+  const results = allMeds.filter(m => matchedNames.has(m.name));
+  if (results.length === 0) {
+    // Return top 3 most common medicines as fallback
+    const fallback = allMeds.filter(m => ['Paracetamol 500mg','Amoxicillin 500mg','Pantoprazole 40mg'].includes(m.name));
+    return res.json({ suggestions: fallback, ai_powered: false, note: 'No specific match found — showing common medicines' });
+  }
+  res.json({ suggestions: results, ai_powered: false });
+});
 
 // ══════════════════════════════════════════════════════════════════════════════
 // ICD-10 SEARCH

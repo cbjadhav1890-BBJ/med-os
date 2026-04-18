@@ -52,6 +52,10 @@ function EncounterDetail({ enc: initEnc, onUpdate, toast }) {
   const [saving, setSaving] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [signing, setSigning] = useState(false)
+  const [diseaseDesc, setDiseaseDesc] = useState('')
+  const [suggestions, setSuggestions] = useState([])
+  const [sugLoading, setSugLoading] = useState(false)
+  const [sugNote, setSugNote] = useState('')
   const { user } = useAuthStore()
 
   useEffect(() => { setEnc(initEnc); setVitals(()=>{ try{return JSON.parse(initEnc.vitals_json||'{}')}catch{return {}} }); setNotes({ history:initEnc.history||'', examination:initEnc.examination||'', chief_complaint:initEnc.chief_complaint||'', follow_up_date:initEnc.follow_up_date||'' }); setIcd10(()=>{ try{return JSON.parse(initEnc.icd10_codes||'[]')}catch{return []} }); setAiNote(initEnc.ai_note||''); setPrescriptions(initEnc.prescriptions||[]); setOrders(initEnc.orders||[]) }, [initEnc])
@@ -116,12 +120,12 @@ function EncounterDetail({ enc: initEnc, onUpdate, toast }) {
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100%' }}>
       {/* Header */}
-      <div style={{ padding:'12px 20px', borderBottom:'1px solid var(--border)', display:'flex', alignItems:'center', gap:12, background:'var(--surface)', flexShrink:0 }}>
+      <div style={{ padding:'12px 20px', borderBottom:'1px solid var(--border)', display:'flex', alignItems:'center', gap:12, background:'var(--surface-2)', flexShrink:0 }}>
         <div style={{ flex:1 }}>
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-            <span style={{ fontSize:13, fontWeight:700 }}>{enc.patient_name}</span>
+            <span style={{ fontSize:13, fontWeight:700, color:'var(--text-white)' }}>{enc.patient_name}</span>
             <span style={{ fontSize:11, color:'var(--text-3)' }}>{enc.uhid}</span>
-            <span style={{ fontSize:11, color:'var(--text-3)' }}>· {enc.age}y {enc.gender}</span>
+            <span style={{ fontSize:11, color:'var(--text-3)' }}>· {enc.age ? enc.age+'y' : '—'} {enc.gender||''}</span>
             {enc.blood_group && <span className="badge badge-info">{enc.blood_group}</span>}
             {enc.allergies && <span className="badge badge-danger" style={{ fontSize:10 }}>⚠ {enc.allergies}</span>}
           </div>
@@ -237,6 +241,50 @@ function EncounterDetail({ enc: initEnc, onUpdate, toast }) {
 
         {tab==='rx' && (
           <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+            {/* 🧠 Medicine Suggestion AI */}
+            {!signed && (
+              <div className="suggest-card">
+                <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12 }}>
+                  <span style={{ fontSize:18 }}>🧠</span>
+                  <div>
+                    <div style={{ fontSize:14, fontWeight:800, color:'var(--text-white)' }}>AI Medicine Advisor</div>
+                    <div style={{ fontSize:11, color:'var(--text-3)' }}>Enter the disease or symptoms — get medicine suggestions from your hospital catalog</div>
+                  </div>
+                </div>
+                <div style={{ display:'flex', gap:8 }}>
+                  <input className="input" value={diseaseDesc} onChange={e=>setDiseaseDesc(e.target.value)} placeholder="e.g. Fever with body ache, Hypertension, Upper respiratory infection…" style={{ flex:1 }} />
+                  <button className="btn btn-primary btn-md" disabled={sugLoading||!diseaseDesc.trim()} onClick={async()=>{
+                    setSugLoading(true); setSuggestions([]); setSugNote('');
+                    try {
+                      const {data}=await api.post(`/encounters/${enc.id}/suggest-medicines`,{disease_description:diseaseDesc});
+                      setSuggestions(data.suggestions||[]); setSugNote(data.note||'');
+                      if(data.ai_powered) toast('🤖 AI-powered suggestions loaded','success');
+                      else toast('💊 Suggestions loaded from catalog','info');
+                    } catch(err) { toast(err.response?.data?.error||'Suggestion failed','error') }
+                    finally { setSugLoading(false) }
+                  }}>{sugLoading?<><span className="spinner spinner-sm"/>Analyzing…</>:'🧠 Suggest'}</button>
+                </div>
+                {sugNote && <div style={{ fontSize:11, color:'var(--warning-light)', marginTop:8 }}>⚠ {sugNote}</div>}
+                {suggestions.length>0 && (
+                  <div style={{ marginTop:12 }}>
+                    <div style={{ fontSize:12, fontWeight:700, color:'var(--text-2)', marginBottom:6 }}>Suggested Medicines ({suggestions.length})</div>
+                    {suggestions.map(med => (
+                      <div key={med.id} className="suggest-item">
+                        <div style={{ width:36, height:36, borderRadius:10, background:'var(--success-bg)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, flexShrink:0 }}>💊</div>
+                        <div style={{ flex:1 }}>
+                          <div className="suggest-name">{med.name}</div>
+                          <div className="suggest-details">{med.generic_name} · {med.category} · {med.strength} · MRP ₹{med.mrp} · Stock: {med.current_stock}</div>
+                        </div>
+                        <button className="btn btn-success btn-xs" onClick={()=>{
+                          setRxForm(f=>({...f, medicine:med.name, strength:med.strength}));
+                          toast(`${med.name} selected — edit dosage & add`, 'info');
+                        }}>+ Add to Rx</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             {!signed && (
               <form onSubmit={addRx} style={{ background:'var(--surface-2)', border:'1px solid var(--border)', borderRadius:12, padding:16 }}>
                 <div style={{ fontSize:13, fontWeight:700, color:'var(--text)', marginBottom:12 }}>💊 Add Prescription</div>
@@ -366,15 +414,15 @@ export default function OPD() {
   return (
     <div style={{ display:'grid', gridTemplateColumns:'300px 1fr', gap:0, height:'calc(100vh - var(--header-h) - 48px)', background:'var(--surface)', borderRadius:16, overflow:'hidden', border:'1px solid var(--border)', boxShadow:'var(--s)' }}>
       {/* Left: Encounter List */}
-      <div style={{ borderRight:'1px solid var(--border)', display:'flex', flexDirection:'column' }}>
+      <div style={{ borderRight:'1px solid var(--border)', display:'flex', flexDirection:'column', background:'var(--surface-2)' }}>
         <div style={{ padding:'12px 14px', borderBottom:'1px solid var(--border)', display:'flex', flexDirection:'column', gap:8, flexShrink:0 }}>
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-            <span style={{ fontSize:13, fontWeight:700, color:'var(--text)' }}>🩺 Encounters</span>
+            <span style={{ fontSize:13, fontWeight:700, color:'var(--text-white)' }}>🩺 Encounters</span>
             <button className="btn btn-primary btn-xs" onClick={() => setShowNew(true)}>+ New</button>
           </div>
           <div style={{ position:'relative' }}>
             <span style={{ position:'absolute', left:8, top:'50%', transform:'translateY(-50%)', fontSize:12, color:'var(--text-3)', pointerEvents:'none' }}>🔍</span>
-            <input style={{ width:'100%', padding:'6px 10px 6px 26px', border:'1.5px solid var(--border)', borderRadius:8, fontSize:12, outline:'none', fontFamily:'inherit', color:'var(--text)' }}
+            <input className="input input-sm" style={{ width:'100%', paddingLeft:26 }}
               placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)} />
           </div>
         </div>
@@ -383,14 +431,14 @@ export default function OPD() {
           : filtered.length===0 ? <div className="empty-state"><div className="empty-state-icon">🩺</div><div className="empty-state-title">No encounters</div><div className="empty-state-desc" style={{ fontSize:11 }}>Create a new OPD encounter</div></div>
           : filtered.map(enc => (
             <div key={enc.id} onClick={() => loadEncounter(enc.id)}
-              style={{ padding:'10px 14px', borderBottom:'1px solid var(--border)', cursor:'pointer', background:selected?.id===enc.id?'var(--primary-50)':'white', transition:'background 0.1s', borderLeft:`3px solid ${enc.status==='signed'?'var(--success)':enc.status==='cancelled'?'var(--border)':'var(--warning)'}` }}>
+              style={{ padding:'10px 14px', borderBottom:'1px solid var(--border)', cursor:'pointer', background:selected?.id===enc.id?'var(--primary-50)':'transparent', transition:'background 0.15s', borderLeft:`3px solid ${enc.status==='signed'?'var(--success)':enc.status==='cancelled'?'var(--border)':'var(--warning)'}` }}>
               <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
-                <div style={{ fontSize:12, fontWeight:700, color:'var(--text)' }}>{enc.patient_name}</div>
+                <div style={{ fontSize:12, fontWeight:700, color:'var(--text-white)' }}>{enc.patient_name}</div>
                 <span className={`badge ${enc.status==='signed'?'badge-success':enc.status==='cancelled'?'badge-gray':'badge-warning'}`} style={{ fontSize:10 }}>{enc.status}</span>
               </div>
-              <div style={{ fontSize:11, color:'var(--text-3)', marginTop:2 }}>{enc.uhid} · {enc.age}y {enc.gender}</div>
+              <div style={{ fontSize:11, color:'var(--text-3)', marginTop:2 }}>{enc.uhid} · {enc.age ? enc.age+'y' : '—'} {enc.gender||''}</div>
               <div style={{ fontSize:11, color:'var(--text-2)', marginTop:2 }} className="truncate">{enc.chief_complaint||'No chief complaint'}</div>
-              <div style={{ fontSize:10, color:'var(--text-3)', marginTop:3 }}>{enc.encounter_no} · {new Date(enc.created_at).toLocaleDateString('en-IN')}</div>
+              <div style={{ fontSize:10, color:'var(--text-3)', marginTop:3 }}>{enc.encounter_no} · {new Date(enc.created_at).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</div>
             </div>
           ))}
         </div>
