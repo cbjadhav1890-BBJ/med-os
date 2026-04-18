@@ -17,14 +17,24 @@ const PORT       = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || 'medos-god-mode-secret-2024';
 const ANTHROPIC  = process.env.ANTHROPIC_API_KEY || '';
 
-const knex = require('knex')({
-  client: 'sqlite3',
-  connection: { filename: path.join(__dirname, 'medos.db') },
-  useNullAsDefault: true,
-});
+const knexConfig = process.env.DATABASE_URL
+  ? {
+      client: 'pg',
+      connection: process.env.DATABASE_URL,
+      searchPath: ['public']
+    }
+  : {
+      client: 'sqlite3',
+      connection: { filename: path.join(__dirname, 'medos.db') },
+      useNullAsDefault: true,
+    };
+
+const knex = require('knex')(knexConfig);
 
 // ─── Enable SQLite foreign keys ───────────────────────────────────────────────
-knex.raw('PRAGMA foreign_keys = ON').then(() => {});
+if (!process.env.DATABASE_URL) {
+  knex.raw('PRAGMA foreign_keys = ON').then(() => {});
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // SCHEMA — ALL TABLES WITH RELATIONSHIPS
