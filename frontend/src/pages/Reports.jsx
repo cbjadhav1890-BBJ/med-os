@@ -49,17 +49,12 @@ export default function Reports() {
     setAnalyzing(true)
 
     try {
-      const aiProvider = localStorage.getItem('AI_PROVIDER') || 'anthropic';
-      const aiKey = localStorage.getItem('AI_KEY') || '';
-
       if (fileToUpload) {
         const fd = new FormData()
         fd.append('file', fileToUpload)
         const { data } = await api.post('/reports/analyze-pdf', fd, { 
            headers: { 
-             'Content-Type': 'multipart/form-data',
-             'x-ai-provider': aiProvider,
-             'x-ai-key': aiKey
+             'Content-Type': 'multipart/form-data'
            } 
         })
         setMessages(prev => [...prev, { role: 'ai', html: data.html }])

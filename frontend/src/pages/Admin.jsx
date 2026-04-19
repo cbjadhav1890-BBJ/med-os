@@ -103,14 +103,19 @@ export default function Admin() {
   const [logTotal, setLogTotal] = useState(0)
   
   // AI Settings State
-  const [aiProvider, setAiProvider] = useState(localStorage.getItem('AI_PROVIDER') || 'anthropic')
-  const [aiKey, setAiKey] = useState(localStorage.getItem('AI_KEY') || '')
+  const [aiProvider, setAiProvider] = useState('anthropic')
+  const [aiKey, setAiKey] = useState('')
+  const [testingAi, setTestingAi] = useState(false)
   
   const toast = useContext(ToastContext)
   const LOG_LIMIT = 50
 
   useEffect(() => {
     api.get('/users').then(r => { setUsers(r.data); setLoading(false) })
+    api.get('/settings').then(r => {
+      if (r.data.AI_PROVIDER) setAiProvider(r.data.AI_PROVIDER)
+      if (r.data.AI_KEY) setAiKey(r.data.AI_KEY)
+    }).catch(()=>{})
   }, [])
 
   useEffect(() => {
@@ -268,11 +273,24 @@ export default function Admin() {
                   placeholder={aiProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'} 
                   style={{ width: '100%', marginBottom: 16 }} 
                />
-               <button className="btn btn-primary" onClick={() => {
-                   localStorage.setItem('AI_PROVIDER', aiProvider);
-                   localStorage.setItem('AI_KEY', aiKey);
-                   toast('Globally connected to ' + (aiProvider==='openai'?'ChatGPT':'Claude'), 'success');
-               }}>Save AI Configuration</button>
+               <div style={{ display: 'flex', gap: 10 }}>
+                 <button className="btn btn-primary" onClick={async () => {
+                     try {
+                       await api.post('/settings', { AI_PROVIDER: aiProvider, AI_KEY: aiKey });
+                       if (aiKey === '') setAiKey(''); // Ensure it clears if deleted
+                       else if (aiKey !== '•••••••••••••••••••••••••') setAiKey('•••••••••••••••••••••••••');
+                       toast('Globally connected to ' + (aiProvider==='openai'?'ChatGPT':'Claude'), 'success');
+                     } catch(err) { toast('Failed to save configuration', 'error') }
+                 }}>Save Configuration</button>
+                 <button className="btn btn-outline" disabled={testingAi} onClick={async () => {
+                     setTestingAi(true)
+                     try {
+                       await api.post('/reports/test-ai', { aiProvider, aiKey });
+                       toast('Connection Test Successful!', 'success');
+                     } catch(err) { toast(err.response?.data?.error || 'Connection Failed', 'error') }
+                     finally { setTestingAi(false) }
+                 }}>{testingAi ? 'Testing...' : 'Test Connection'}</button>
+               </div>
               </div>
               <div style={{ flex: 1, background: 'var(--surface-2)', padding: 16, borderRadius: 12, border: '1px solid var(--border)' }}>
                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 8 }}>How to generate your key:</div>
@@ -281,14 +299,14 @@ export default function Admin() {
                      1. Go to <a href="https://platform.openai.com/api-keys" target="_blank" style={{ color: 'var(--primary)' }}>platform.openai.com/api-keys</a><br/>
                      2. Create a new secret key.<br/>
                      3. Make sure your account has a billing method attached.<br/>
-                     4. Paste it here. Your key is stored securely in your browser and never saved to our database.
+                     4. Paste it here. Your key is securely stored in the application database for global access.
                    </div>
                  ) : (
                    <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.5 }}>
                      1. Go to <a href="https://console.anthropic.com/settings/keys" target="_blank" style={{ color: 'var(--primary)' }}>console.anthropic.com/settings/keys</a><br/>
                      2. Click "Create Key".<br/>
                      3. Add credits to your Anthropic billing account.<br/>
-                     4. Paste it here. Your key is stored securely in your browser and never saved to our database.
+                     4. Paste it here. Your key is securely stored in the application database for global access.
                    </div>
                  )}
               </div>

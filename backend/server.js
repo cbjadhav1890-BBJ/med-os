@@ -405,7 +405,15 @@ async function setupSchema() {
     t.datetime('created_at').defaultTo(knex.fn.now());
   });
 
-  console.log('✅ All 19 tables created with relationships');
+  // 20. SYSTEM SETTINGS
+  if (!await has('system_settings')) await knex.schema.createTable('system_settings', t => {
+    t.string('key').primary();
+    t.text('value').defaultTo('');
+    t.string('updated_by').references('id').inTable('users');
+    t.datetime('updated_at').defaultTo(knex.fn.now());
+  });
+
+  console.log('✅ All 20 tables created with relationships');
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -629,6 +637,14 @@ async function syncMedicineStock(medicineId) {
 async function nextNo(table, field, prefix) {
   const [r] = await knex(table).count('id as c');
   return `${prefix}${String(Number(r.c)+1).padStart(5,'0')}`;
+}
+
+async function getAIConfig() {
+  const p = await knex('system_settings').where({ key: 'AI_PROVIDER' }).first();
+  const k = await knex('system_settings').where({ key: 'AI_KEY' }).first();
+  const provider = p?.value || 'anthropic';
+  const key = k?.value || (provider === 'anthropic' ? ANTHROPIC : '');
+  return { provider, key };
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -914,15 +930,24 @@ app.post('/api/encounters/:id/ai-note', auth, can('doctor','admin'), async (req,
   const enc = await knex('encounters').where({id:req.params.id}).first();
   if (!enc) return res.status(404).json({ error:'Not found' });
 
-  if (!ANTHROPIC) {
-    const note = `**SUBJECTIVE:**\nChief Complaint: ${chief_complaint||enc.chief_complaint||'As documented'}\nHistory: ${transcript||'History taken during consultation.'}\n\n**OBJECTIVE:**\nVitals: BP ${vitals?.bp||'N/A'} mmHg | Temp ${vitals?.temp||'N/A'}°F | Pulse ${vitals?.pulse||'N/A'}/min | SpO2 ${vitals?.spo2||'N/A'}% | Wt ${vitals?.weight||'N/A'} kg\nGeneral: Conscious, oriented, cooperative. No acute distress.\n\n**ASSESSMENT:**\nClinical impression consistent with presenting complaints.\n\n**PLAN:**\n1. Investigations as ordered\n2. Medications per prescription\n3. Patient counselled — diagnosis, treatment, warning signs\n4. Follow-up as scheduled\n\n*Set ANTHROPIC_API_KEY for AI-generated notes.*`;
+  const { provider, key } = await getAIConfig();
+
+  if (!key) {
+    const note = `**SUBJECTIVE:**\nChief Complaint: ${chief_complaint||enc.chief_complaint||'As documented'}\nHistory: ${transcript||'History taken during consultation.'}\n\n**OBJECTIVE:**\nVitals: BP ${vitals?.bp||'N/A'} mmHg | Temp ${vitals?.temp||'N/A'}°F | Pulse ${vitals?.pulse||'N/A'}/min | SpO2 ${vitals?.spo2||'N/A'}% | Wt ${vitals?.weight||'N/A'} kg\nGeneral: Conscious, oriented, cooperative. No acute distress.\n\n**ASSESSMENT:**\nClinical impression consistent with presenting complaints.\n\n**PLAN:**\n1. Investigations as ordered\n2. Medications per prescription\n3. Patient counselled — diagnosis, treatment, warning signs\n4. Follow-up as scheduled\n\n*Set Global AI Key in Admin Panel for AI-generated notes.*`;
     await knex('encounters').where({id:req.params.id}).update({ ai_note:note });
     return res.json({ note, ai_generated:false });
   }
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages',{ method:'POST', headers:{'Content-Type':'application/json','x-api-key':ANTHROPIC,'anthropic-version':'2023-06-01'}, body:JSON.stringify({ model:'claude-haiku-4-5-20251001', max_tokens:1500, messages:[{role:'user',content:`Generate SOAP note.\nCC: ${chief_complaint||enc.chief_complaint}\nVitals: BP ${vitals?.bp||'N/A'} | T ${vitals?.temp||'N/A'}°F | P ${vitals?.pulse||'N/A'} | SpO2 ${vitals?.spo2||'N/A'}% | Wt ${vitals?.weight||'N/A'}kg\nNotes: ${transcript||'None'}\nWrite structured SOAP with **bold** headings. Clinical and concise.`}] }) });
-    const d = await r.json();
-    const note = d.content[0].text;
+    let note = '';
+    if (provider === 'openai') {
+      const r = await fetch('https://api.openai.com/v1/chat/completions',{ method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`}, body:JSON.stringify({ model:'gpt-4o-mini', messages:[{role:'user',content:`Generate SOAP note.\nCC: ${chief_complaint||enc.chief_complaint}\nVitals: BP ${vitals?.bp||'N/A'} | T ${vitals?.temp||'N/A'}°F | P ${vitals?.pulse||'N/A'} | SpO2 ${vitals?.spo2||'N/A'}% | Wt ${vitals?.weight||'N/A'}kg\nNotes: ${transcript||'None'}\nWrite structured SOAP with **bold** headings. Clinical and concise.`}] }) });
+      const d = await r.json();
+      note = d.choices[0].message.content;
+    } else {
+      const r = await fetch('https://api.anthropic.com/v1/messages',{ method:'POST', headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'}, body:JSON.stringify({ model:'claude-3-haiku-20240307', max_tokens:1500, messages:[{role:'user',content:`Generate SOAP note.\nCC: ${chief_complaint||enc.chief_complaint}\nVitals: BP ${vitals?.bp||'N/A'} | T ${vitals?.temp||'N/A'}°F | P ${vitals?.pulse||'N/A'} | SpO2 ${vitals?.spo2||'N/A'}% | Wt ${vitals?.weight||'N/A'}kg\nNotes: ${transcript||'None'}\nWrite structured SOAP with **bold** headings. Clinical and concise.`}] }) });
+      const d = await r.json();
+      note = d.content[0].text;
+    }
     await knex('encounters').where({id:req.params.id}).update({ai_note:note});
     await auditLog(req.user.id,req.user.username,req.user.role,'GENERATE_AI_NOTE','encounter',req.params.id,{});
     res.json({ note, ai_generated:true });
@@ -1405,21 +1430,35 @@ app.post('/api/encounters/:id/suggest-medicines', auth, can('doctor','admin'), a
   if (!disease_description) return res.status(400).json({ error:'disease_description required' });
 
   const allMeds = await knex('medicine_catalog').where({ is_active:1 });
+  const { provider, key } = await getAIConfig();
 
-  if (ANTHROPIC) {
+  if (key) {
     try {
       const medList = allMeds.map(m => `${m.name} (${m.generic_name}, ${m.category}, ${m.strength})`).join('\n');
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
-        method:'POST',
-        headers:{ 'Content-Type':'application/json', 'x-api-key':ANTHROPIC, 'anthropic-version':'2023-06-01' },
-        body: JSON.stringify({
-          model:'claude-haiku-4-5-20251001', max_tokens:500,
-          messages:[{ role:'user', content:`You are a clinical decision support system. Given this condition: "${disease_description}", suggest the most appropriate medicines from this catalog:\n${medList}\n\nReturn ONLY a JSON array of medicine names that are appropriate. Example: ["Paracetamol 500mg","Amoxicillin 500mg"]` }]
-        })
-      });
-      const d = await r.json();
       let suggested = [];
-      try { suggested = JSON.parse(d.content[0].text); } catch { suggested = []; }
+      if (provider === 'openai') {
+        const r = await fetch('https://api.openai.com/v1/chat/completions', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', 'Authorization': `Bearer ${key}` },
+          body: JSON.stringify({
+            model:'gpt-4o-mini',
+            messages:[{ role:'user', content:`You are a clinical decision support system. Given this condition: "${disease_description}", suggest the most appropriate medicines from this catalog:\n${medList}\n\nReturn ONLY a JSON array of medicine names that are appropriate. Example: ["Paracetamol 500mg","Amoxicillin 500mg"]` }]
+          })
+        });
+        const d = await r.json();
+        try { suggested = JSON.parse(d.choices[0].message.content); } catch { suggested = []; }
+      } else {
+        const r = await fetch('https://api.anthropic.com/v1/messages', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', 'x-api-key':key, 'anthropic-version':'2023-06-01' },
+          body: JSON.stringify({
+            model:'claude-3-haiku-20240307', max_tokens:500,
+            messages:[{ role:'user', content:`You are a clinical decision support system. Given this condition: "${disease_description}", suggest the most appropriate medicines from this catalog:\n${medList}\n\nReturn ONLY a JSON array of medicine names that are appropriate. Example: ["Paracetamol 500mg","Amoxicillin 500mg"]` }]
+          })
+        });
+        const d = await r.json();
+        try { suggested = JSON.parse(d.content[0].text); } catch { suggested = []; }
+      }
       const results = allMeds.filter(m => suggested.includes(m.name));
       return res.json({ suggestions: results, ai_powered: true });
     } catch(err) { /* fall through to keyword matching */ }
@@ -1524,8 +1563,58 @@ app.get('/api/audit-log', auth, can('admin'), async (req,res) => {
   res.json({ logs, total });
 });
 
+app.get('/api/settings', auth, async (req,res) => {
+  const settings = await knex('system_settings').select('key','value');
+  const dict = {};
+  settings.forEach(s => dict[s.key] = s.value);
+  if (dict.AI_KEY) dict.AI_KEY = '•••••••••••••••••••••••••';
+  res.json(dict);
+});
+
+app.post('/api/settings', auth, can('admin'), async (req,res) => {
+  const keys = Object.keys(req.body);
+  for (const k of keys) {
+    if (k === 'AI_KEY' && req.body[k] === '•••••••••••••••••••••••••') continue;
+    if (k === 'AI_KEY' && req.body[k] === '') {
+      await knex('system_settings').where({key:k}).delete();
+      continue;
+    }
+    const exists = await knex('system_settings').where({key:k}).first();
+    if (exists) await knex('system_settings').where({key:k}).update({value:req.body[k], updated_by:req.user.id, updated_at:new Date().toISOString()});
+    else await knex('system_settings').insert({key:k, value:req.body[k], updated_by:req.user.id});
+  }
+  res.json({ success:true });
+});
+
+app.post('/api/reports/test-ai', auth, can('admin'), async (req, res) => {
+  const { aiProvider, aiKey } = req.body;
+  let testKey = aiKey;
+  if (testKey === '•••••••••••••••••••••••••') {
+    const k = await knex('system_settings').where({ key: 'AI_KEY' }).first();
+    testKey = k?.value;
+  }
+  if (!testKey) return res.status(400).json({ error: 'API Key is required to test' });
+  
+  try {
+    if (aiProvider === 'openai') {
+      const call = await fetch('https://api.openai.com/v1/models', { headers: { 'Authorization': `Bearer ${testKey}` } });
+      if (!call.ok) { const err = await call.json(); throw new Error(err.error?.message || 'Invalid API Key'); }
+    } else {
+      const call = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': testKey, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: 'claude-3-haiku-20240307', max_tokens: 10, messages: [{role:'user',content:'ping'}] })
+      });
+      if (!call.ok) { const err = await call.json(); throw new Error(err.error?.message || 'Invalid API Key'); }
+    }
+    res.json({ success: true, message: 'Connection successful!' });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.get('/api/health', async (_,res) => {
-  const tables = ['users','patients','encounters','appointments','charges','invoices','payments','medicine_catalog','stock_transactions','admissions','expenses','audit_log'];
+  const tables = ['users','patients','encounters','appointments','charges','invoices','payments','medicine_catalog','stock_transactions','admissions','expenses','audit_log','system_settings'];
   const counts = {};
   for (const t of tables) { const [r] = await knex(t).count('id as c'); counts[t]=r.c; }
   res.json({ status:'ok', version:'3.0-god-mode', db:'medos.db', tables:counts, time:new Date().toISOString() });
@@ -1538,14 +1627,18 @@ app.post('/api/reports/analyze-pdf', upload.single('file'), async (req, res) => 
   if (!req.file) return res.status(400).json({ error: 'No PDF file uploaded.' });
   if (req.file.mimetype !== 'application/pdf') return res.status(400).json({ error: 'Only PDF files are allowed.' });
 
-  const aiProvider = req.headers['x-ai-provider'] || 'anthropic';
-  const customKey = req.headers['x-ai-key'] || '';
-  const finalKey = customKey || (aiProvider === 'anthropic' ? ANTHROPIC : '');
+  const aiConf = await getAIConfig();
+  const reqProvider = req.headers['x-ai-provider'];
+  const customKey = req.headers['x-ai-key'];
+  
+  // Custom headers override global config if provided (for testing purposes)
+  const finalProvider = reqProvider || aiConf.provider;
+  const finalKey = customKey || (customKey === '' && !aiConf.key ? '' : aiConf.key);
 
   if (!finalKey) {
     const mockHtml = `
       <h3 style="color:var(--primary); margin-top:0;">Mock Analysis Mode</h3> 
-      <p>This is a simulated response because no API Key was configured for ${aiProvider === 'openai' ? 'OpenAI' : 'Anthropic'}. Please add your key in the System Administration tab!</p>
+      <p>This is a simulated response because no API Key was configured for ${finalProvider === 'openai' ? 'OpenAI' : 'Anthropic'}. Please add your key in the System Administration tab!</p>
       <h3 style="color:var(--success);">The Good (Normal/Positive)</h3> 
       <ul><li>Hemoglobin levels are stable at 14.2 g/dL</li><li>Blood pressure is securely within normal ranges</li></ul>
       <h3 style="color:var(--danger);">The Bad (Abnormal/Risks)</h3> 
@@ -1571,7 +1664,7 @@ Output these sections:
 3. <h3 style="color:var(--danger);">The Bad (Abnormal/Risks)</h3> <ul>...</ul>
 4. <h3 style="color:var(--warning);">Recommendations</h3> <ul>...</ul>`;
 
-    if (aiProvider === 'openai') {
+    if (finalProvider === 'openai') {
       const r = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${finalKey}` },
