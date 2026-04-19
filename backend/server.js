@@ -167,10 +167,6 @@ async function setupSchema() {
   const hasEncCol = await knex.schema.hasColumn('appointments', 'encounter_id');
   if (!hasEncCol) await knex.schema.table('appointments', t => t.string('encounter_id'));
 
-  // Migration: add payment_mode to invoices if missing
-  const hasInvPayMode = await knex.schema.hasColumn('invoices', 'payment_mode');
-  if (!hasInvPayMode) await knex.schema.table('invoices', t => t.string('payment_mode').defaultTo('Cash'));
-
   // 7. PRESCRIPTIONS
   if (!await has('prescriptions')) await knex.schema.createTable('prescriptions', t => {
     t.string('id').primary();
@@ -350,10 +346,17 @@ async function setupSchema() {
     t.float('amount_paid').defaultTo(0);     // ADD as payments come in
     t.float('amount_due').notNullable();     // total_amount - amount_paid (SUBTRACT on payment)
     t.string('payment_status').defaultTo('pending'); // pending/partial/paid/cancelled
+    t.string('payment_mode').defaultTo('Cash');      // default payment mode
     t.string('notes').defaultTo('');
     t.string('created_by').references('id').inTable('users');
     t.datetime('created_at').defaultTo(knex.fn.now());
   });
+
+  // Migration: add payment_mode to invoices if missing
+  if (await has('invoices')) {
+    const hasInvPayMode = await knex.schema.hasColumn('invoices', 'payment_mode');
+    if (!hasInvPayMode) await knex.schema.table('invoices', t => t.string('payment_mode').defaultTo('Cash'));
+  }
 
   // 17. PAYMENTS — ADD/SUBTRACT from patient balance and invoice outstanding
   if (!await has('payments')) await knex.schema.createTable('payments', t => {
