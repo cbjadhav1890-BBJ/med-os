@@ -39,3 +39,4 @@ JWT_SECRET=your-secret-here
 ANTHROPIC_API_KEY=sk-ant-...   # Optional: for AI SOAP notes
 FRONTEND_URL=http://localhost:3000
 ```
+"# med-os" 
