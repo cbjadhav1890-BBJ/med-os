@@ -1,0 +1,24 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: medos-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: medos
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: medos123
+    ports:
+      - "5432:5432"
+    volumes:
+      - medos_postgres_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d medos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  medos_postgres_data:
