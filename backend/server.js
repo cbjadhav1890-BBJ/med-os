@@ -8,9 +8,29 @@ const jwt      = require('jsonwebtoken');
 const bcrypt   = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const path     = require('path');
+const fs       = require('fs');
 const multer   = require('multer');
 const pdfParse = require('pdf-parse');
 const upload   = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+
+function loadEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return;
+  const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    if (!process.env[key]) process.env[key] = value;
+  }
+}
+
+loadEnvFile(path.join(__dirname, '.env'));
 
 const app        = express();
 const PORT       = process.env.PORT || 3001;
@@ -557,8 +577,8 @@ async function seed() {
 
   // Sample invoice + payment
   const charges = await knex('charges').where({ patient_id:patIds[0], status:'pending' });
-  const sub = charges.reduce((s,c)=>s+c.amount,0);
-  const gstT = charges.reduce((s,c)=>s+c.gst_amount,0);
+  const sub = charges.reduce((s,c)=>s+Number(c.amount||0),0);
+  const gstT = charges.reduce((s,c)=>s+Number(c.gst_amount||0),0);
   const tot = sub+gstT;
   const invId = uuidv4();
   await knex('invoices').insert({ id:invId, invoice_no:'INV-2024-00001', patient_id:patIds[0], line_items:JSON.stringify(charges), subtotal:sub, gst_total:gstT, total_amount:tot, amount_paid:0, amount_due:tot, payment_status:'pending', gst_breakup:'{}', created_by:userIds['admin'] });
@@ -731,10 +751,10 @@ app.post('/api/departments', auth, can('admin'), async (req,res) => {
 // ══════════════════════════════════════════════════════════════════════════════
 app.get('/api/patients', auth, async (req,res) => {
   const { search='', page=1, limit=50 } = req.query;
-  let q = knex('patients').orderBy('created_at','desc');
+  let q = knex('patients');
   if (search) q = q.where(b => b.whereILike('name',`%${search}%`).orWhereLike('phone',`%${search}%`).orWhereLike('uhid',`%${search}%`));
   const [{ c:total }] = await q.clone().count('id as c');
-  const patients = await q.limit(Number(limit)).offset((Number(page)-1)*Number(limit));
+  const patients = await q.orderBy('created_at','desc').limit(Number(limit)).offset((Number(page)-1)*Number(limit));
   res.json({ patients, total, page:Number(page) });
 });
 
@@ -760,9 +780,9 @@ app.post('/api/patients', auth, can('reception','admin','doctor','nurse'), async
     if (isNaN(ageNum) || ageNum < 0 || ageNum > 150) return res.status(400).json({ error:'Age must be between 0 and 150' });
   }
   const [mx] = await knex('patients').select(knex.raw("MAX(CAST(REPLACE(uhid,'UHID-','') AS INTEGER)) as maxNum"));
-  const num = (mx.maxNum||1000)+1;
+  const num = Number(mx.maxNum ?? mx.maxnum ?? 1000)+1;
   const id=uuidv4(), uhid=`UHID-${String(num).padStart(4,'0')}`;
-  await knex('patients').insert({ id,uhid,name,age:age||null,gender:gender||null,dob:dob||'',phone,email:email||'',address:address||'',city:city||'',state:state||'',pincode:pincode||'',blood_group:blood_group||'',allergies:allergies||'',abha_id:abha_id||'',emergency_contact_name:emergency_contact_name||'',emergency_contact_phone:emergency_contact_phone||'',insurance_provider:insurance_provider||'',insurance_policy_no:insurance_policy_no||'',dpdp_consent:dpdp_consent?1:0,dpdp_consent_date:dpdp_consent?new Date().toISOString():'',dpdp_purpose:dpdp_purpose||'',created_by:req.user.id });
+  await knex('patients').insert({ id,uhid,name,age:age||null,gender:gender||null,dob:dob||'',phone,email:email||'',address:address||'',city:city||'',state:state||'',pincode:pincode||'',blood_group:blood_group||'',allergies:allergies||'',abha_id:abha_id||'',emergency_contact_name:emergency_contact_name||'',emergency_contact_phone:emergency_contact_phone||'',insurance_provider:insurance_provider||'',insurance_policy_no:insurance_policy_no||'',dpdp_consent:dpdp_consent?1:0,dpdp_consent_date:dpdp_consent?new Date().toISOString().slice(0,10):'',dpdp_purpose:dpdp_purpose||'',created_by:req.user.id });
   await auditLog(req.user.id,req.user.username,req.user.role,'REGISTER_PATIENT','patient',id,{name,uhid});
   res.status(201).json(await knex('patients').where({id}).first());
 });
@@ -778,7 +798,7 @@ app.put('/api/patients/:id', auth, can('reception','admin','doctor','nurse'), as
 
 app.patch('/api/patients/:id/consent', auth, can('reception','admin','nurse'), async (req,res) => {
   const { dpdp_consent, dpdp_purpose } = req.body;
-  await knex('patients').where({id:req.params.id}).update({ dpdp_consent:dpdp_consent?1:0, dpdp_consent_date:dpdp_consent?new Date().toISOString():'', dpdp_purpose:dpdp_purpose||'', updated_at:new Date().toISOString() });
+  await knex('patients').where({id:req.params.id}).update({ dpdp_consent:dpdp_consent?1:0, dpdp_consent_date:dpdp_consent?new Date().toISOString().slice(0,10):'', dpdp_purpose:dpdp_purpose||'', updated_at:new Date().toISOString() });
   await auditLog(req.user.id,req.user.username,req.user.role,'UPDATE_DPDP_CONSENT','patient',req.params.id,{dpdp_consent});
   res.json({ success:true });
 });
@@ -1619,8 +1639,8 @@ app.post('/api/reports/test-ai', auth, can('admin'), async (req, res) => {
 app.get('/api/health', async (_,res) => {
   const tables = ['users','patients','encounters','appointments','charges','invoices','payments','medicine_catalog','stock_transactions','admissions','expenses','audit_log','system_settings'];
   const counts = {};
-  for (const t of tables) { const [r] = await knex(t).count('id as c'); counts[t]=r.c; }
-  res.json({ status:'ok', version:'3.0-god-mode', db:'medos.db', tables:counts, time:new Date().toISOString() });
+  for (const t of tables) { const [r] = await knex(t).count('* as c'); counts[t]=r.c; }
+  res.json({ status:'ok', version:'3.0-god-mode', db:process.env.DATABASE_URL?'postgres':'medos.db', tables:counts, time:new Date().toISOString() });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
