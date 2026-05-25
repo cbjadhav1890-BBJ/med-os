@@ -1,11 +1,12 @@
 const request = require('supertest');
 
-const app = require('../../src/index').app;
+const { app, ready } = require('../../src/index');
 
 let adminToken;
 let doctorToken;
 
 beforeAll(async () => {
+  await ready;
   const adminRes = await request(app).post('/api/auth/login').send({ username: 'admin', password: 'admin123' });
   adminToken = adminRes.body.token;
 
@@ -64,13 +65,15 @@ describe('Patients API', () => {
       expect(res.body.uhid).toMatch(/^UHID-/);
     });
 
-    it('should reject non-authorized roles', async () => {
-      const res = await request(app).post('/api/patients').set('Authorization', `Bearer ${doctorToken}`).send({
-        name: 'Unauthorized Patient',
-        phone: '9876543211',
-      });
-      expect(res.status).toBe(403);
-    });
+it('should reject non-authorized roles', async () => {
+  const pharmaRes = await request(app).post('/api/auth/login').send({ username: 'pharma1', password: 'pharma123' });
+  const pharmacistToken = pharmaRes.body.token;
+  const res = await request(app).post('/api/patients').set('Authorization', `Bearer ${pharmacistToken}`).send({
+    name: 'Unauthorized Patient',
+    phone: '9876543211',
+  });
+  expect(res.status).toBe(403);
+});
   });
 
   describe('GET /api/patients/:id', () => {

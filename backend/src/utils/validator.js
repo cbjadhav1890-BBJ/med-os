@@ -6,7 +6,6 @@ const validate = (schema) => {
 
     for (const [field, rules] of Object.entries(schema)) {
       const value = req.body[field];
-      const path = field;
 
       for (const rule of rules) {
         switch (rule.type) {

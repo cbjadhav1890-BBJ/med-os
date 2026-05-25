@@ -1,11 +1,12 @@
 const request = require('supertest');
 
-const app = require('../../src/index').app;
+const { app, ready } = require('../../src/index');
 
 let adminToken;
 let receptionistToken;
 
 beforeAll(async () => {
+  await ready;
   const adminRes = await request(app).post('/api/auth/login').send({ username: 'admin', password: 'admin123' });
   adminToken = adminRes.body.token;
 
@@ -45,17 +46,21 @@ describe('Appointments API', () => {
       const patientsRes = await request(app).get('/api/patients').set('Authorization', `Bearer ${adminToken}`);
       const patientId = patientsRes.body.patients[0]?.id;
 
-      const doctorsRes = await request(app).get('/api/departments').set('Authorization', `Bearer ${adminToken}`);
+      const doctorLogin = await request(app).post('/api/auth/login').send({ username: 'drpriya', password: 'doctor123' });
+      const doctorRes = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${doctorLogin.body.token}`);
+      const doctorId = doctorRes.body.id;
 
-      if (patientId) {
+      if (patientId && doctorId) {
         const res = await request(app).post('/api/appointments').set('Authorization', `Bearer ${adminToken}`).send({
           patient_id: patientId,
-          doctor_id: 'some-doctor-id',
+          doctor_id: doctorId,
           scheduled_date: '2025-12-31',
           scheduled_time: '10:00',
           chief_complaint: 'Test complaint',
         });
-        expect(res.status).toBe(400);
+        expect(res.status).toBe(201);
+        expect(res.body).toHaveProperty('id');
+        expect(res.body.appointment_no).toMatch(/^APT-/);
       }
     });
   });

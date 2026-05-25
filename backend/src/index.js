@@ -86,9 +86,17 @@ async function setupSchema() {
   if (schemaSetup) return;
   schemaSetup = true;
 
-  const has = t => knex.schema.hasTable(t);
+  const safeTable = async (name, cb) => {
+    if (!await knex.schema.hasTable(name)) {
+      try {
+        await knex.schema.createTable(name, cb);
+      } catch (e) {
+        if (!e.message?.toLowerCase().includes('already exists')) throw e;
+      }
+    }
+  };
 
-  if (!await has('departments')) await knex.schema.createTable('departments', t => {
+  await safeTable('departments', t => {
     t.string('id').primary();
     t.string('name').notNullable();
     t.string('code').unique();
@@ -100,7 +108,7 @@ async function setupSchema() {
     t.datetime('created_at').defaultTo(knex.fn.now());
   });
 
-  if (!await has('users')) await knex.schema.createTable('users', t => {
+  await safeTable('users', t => {
     t.string('id').primary();
     t.string('username').unique().notNullable();
     t.string('password_hash').notNullable();
@@ -117,7 +125,7 @@ async function setupSchema() {
     t.datetime('created_at').defaultTo(knex.fn.now());
   });
 
-  if (!await has('patients')) await knex.schema.createTable('patients', t => {
+  await safeTable('patients', t => {
     t.string('id').primary();
     t.string('uhid').unique().notNullable();
     t.string('name').notNullable();
@@ -148,7 +156,7 @@ async function setupSchema() {
     t.datetime('updated_at').defaultTo(knex.fn.now());
   });
 
-  if (!await has('appointments')) await knex.schema.createTable('appointments', t => {
+  await safeTable('appointments', t => {
     t.string('id').primary();
     t.string('appointment_no').unique().notNullable();
     t.string('patient_id').notNullable();
@@ -166,7 +174,7 @@ async function setupSchema() {
     t.datetime('updated_at').defaultTo(knex.fn.now());
   });
 
-  if (!await has('encounters')) await knex.schema.createTable('encounters', t => {
+  await safeTable('encounters', t => {
     t.string('id').primary();
     t.string('encounter_no').unique().notNullable();
     t.string('patient_id').notNullable();
@@ -188,7 +196,7 @@ async function setupSchema() {
     t.datetime('updated_at').defaultTo(knex.fn.now());
   });
 
-  if (!await has('invoices')) await knex.schema.createTable('invoices', t => {
+  await safeTable('invoices', t => {
     t.string('id').primary();
     t.string('invoice_no').unique().notNullable();
     t.string('patient_id').notNullable();
@@ -209,7 +217,7 @@ async function setupSchema() {
     t.datetime('created_at').defaultTo(knex.fn.now());
   });
 
-  if (!await has('payments')) await knex.schema.createTable('payments', t => {
+  await safeTable('payments', t => {
     t.string('id').primary();
     t.string('payment_no').unique().notNullable();
     t.string('patient_id').notNullable();
@@ -226,7 +234,22 @@ async function setupSchema() {
     t.datetime('created_at').defaultTo(knex.fn.now());
   });
 
-  if (!await has('audit_log')) await knex.schema.createTable('audit_log', t => {
+  await safeTable('admissions', t => {
+    t.string('id').primary();
+    t.string('admission_no').unique().notNullable();
+    t.string('patient_id').notNullable();
+    t.string('doctor_id');
+    t.string('room_id');
+    t.string('bed_no').defaultTo('');
+    t.string('admission_date').notNullable();
+    t.string('discharge_date').defaultTo('');
+    t.string('admission_diagnosis').defaultTo('');
+    t.string('status').defaultTo('admitted');
+    t.string('created_by');
+    t.datetime('created_at').defaultTo(knex.fn.now());
+  });
+
+  await safeTable('audit_log', t => {
     t.string('id').primary();
     t.string('user_id').defaultTo('');
     t.string('username').notNullable();
@@ -243,6 +266,9 @@ async function setupSchema() {
 }
 
 async function seed() {
+  if (seeded) return;
+  seeded = true;
+
   const cnt = await knex('users').count('id as c').first();
   if (cnt.c > 0) return;
 
@@ -251,17 +277,25 @@ async function seed() {
     { id: uuidv4(), name: 'Cardiology', code: 'CARD', type: 'OPD' },
     { id: uuidv4(), name: 'Administration', code: 'ADMIN', type: 'Admin' },
   ];
-  await knex('departments').insert(depts);
+  try {
+    await knex('departments').insert(depts);
+  } catch {
+    return;
+  }
   const deptMap = Object.fromEntries(depts.map(d => [d.code, d.id]));
 
   const users = [
     { u: 'admin', p: 'admin123', r: 'admin', n: 'System Admin', dept: 'ADMIN' },
     { u: 'drpriya', p: 'doctor123', r: 'doctor', n: 'Dr. Priya Sharma', dept: 'GM' },
     { u: 'reception1', p: 'recep123', r: 'reception', n: 'Rekha Devi', dept: 'ADMIN' },
+    { u: 'billing1', p: 'billing123', r: 'billing', n: 'Amit Kumar', dept: 'ADMIN' },
+    { u: 'pharma1', p: 'pharma123', r: 'pharmacist', n: 'Ravi Sharma', dept: 'ADMIN' },
   ];
   for (const u of users) {
-    const id = uuidv4();
-    await knex('users').insert({ id, username: u.u, password_hash: bcrypt.hashSync(u.p, 10), role: u.r, name: u.n, department_id: deptMap[u.dept], department: depts.find(d => d.code === u.dept)?.name || '' });
+    try {
+      const id = uuidv4();
+      await knex('users').insert({ id, username: u.u, password_hash: bcrypt.hashSync(u.p, 10), role: u.r, name: u.n, department_id: deptMap[u.dept], department: depts.find(d => d.code === u.dept)?.name || '' });
+    } catch {}
   }
 
   console.log('✅ Database seeded');
@@ -287,13 +321,13 @@ process.on('unhandledRejection', (reason) => {
 });
 
 async function auditLog(userId, username, role, action, entityType, entityId, details) {
-  try { await knex('audit_log').insert({ id: require('uuid').v4(), user_id: userId || '', username, user_role: role || '', action, entity_type: entityType || '', entity_id: entityId || '', details: JSON.stringify(details || {}) }); } catch {}
+  try { await knex('audit_log').insert({ id: uuidv4(), user_id: userId || '', username, user_role: role || '', action, entity_type: entityType || '', entity_id: entityId || '', details: JSON.stringify(details || {}) }); } catch {}
 }
 
 function auth(req, res, next) {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'Authentication required' });
-  try { req.user = require('jsonwebtoken').verify(token, JWT_SECRET); next(); }
+  try { req.user = jwt.verify(token, JWT_SECRET); next(); }
   catch { return res.status(401).json({ error: 'Invalid or expired token' }); }
 }
 
@@ -305,10 +339,6 @@ async function nextNo(table, field, prefix) {
   const [r] = await knex(table).count('id as c');
   return `${prefix}${String(Number(r.c) + 1).padStart(5, '0')}`;
 }
-
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
-const { v4: uuidv4 } = require('uuid');
 
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
@@ -353,7 +383,14 @@ app.get('/api/patients/:id', auth, async (req, res) => {
 app.post('/api/patients', auth, can('reception', 'admin', 'doctor', 'nurse'), async (req, res) => {
   const { name, age, gender, dob, phone, email, address, city, state, pincode, blood_group, allergies, abha_id, emergency_contact_name, emergency_contact_phone, insurance_provider, insurance_policy_no, dpdp_consent, dpdp_purpose } = req.body;
   if (!name || !phone) return res.status(400).json({ error: 'Name and phone required' });
-  const [mx] = await knex('patients').select(require('knex').raw("MAX(CAST(REPLACE(uhid,'UHID-','') AS INTEGER)) as maxNum"));
+  if (name && (name.includes('<') || name.includes('>'))) {
+    return res.status(400).json({ error: 'Name cannot contain HTML or special characters < and >' });
+  }
+  if (age !== undefined && age !== '' && age !== null) {
+    const ageNum = Number(age);
+    if (isNaN(ageNum) || ageNum < 0 || ageNum > 150) return res.status(400).json({ error: 'Age must be between 0 and 150' });
+  }
+  const [mx] = await knex('patients').select(knex.raw("MAX(CAST(REPLACE(uhid,'UHID-','') AS INTEGER)) as maxNum"));
   const num = (mx?.maxNum || 1000) + 1;
   const id = uuidv4(), uhid = `UHID-${String(num).padStart(4, '0')}`;
   await knex('patients').insert({ id, uhid, name, age: age || null, gender: gender || null, dob: dob || '', phone, email: email || '', address: address || '', city: city || '', state: state || '', pincode: pincode || '', blood_group: blood_group || '', allergies: allergies || '', abha_id: abha_id || '', emergency_contact_name: emergency_contact_name || '', emergency_contact_phone: emergency_contact_phone || '', insurance_provider: insurance_provider || '', insurance_policy_no: insurance_policy_no || '', dpdp_consent: dpdp_consent ? 1 : 0, dpdp_consent_date: dpdp_consent ? new Date().toISOString() : '', dpdp_purpose: dpdp_purpose || '', created_by: req.user.id });
@@ -461,15 +498,22 @@ app.post('/api/payments', auth, can('billing', 'admin'), async (req, res) => {
   res.status(201).json(await knex('payments').where({ id }).first());
 });
 
+// Catch-all 404 handler for unknown routes
+app.use((req, res) => {
+  res.status(404).json({ error: 'Endpoint not found' });
+});
+
 async function init() {
   await setupSchema();
   await seed();
-  app.listen(PORT, () => {
-    console.log(`🚀 MedOS HMS running on port ${PORT}`);
-    console.log(`📚 Health check: http://localhost:${PORT}/api/health`);
-  });
+  if (process.env.NODE_ENV !== 'test') {
+    app.listen(PORT, () => {
+      console.log(`🚀 MedOS HMS running on port ${PORT}`);
+      console.log(`📚 Health check: http://localhost:${PORT}/api/health`);
+    });
+  }
 }
 
-init();
+const ready = init();
 
-module.exports = { app, knex };
+module.exports = { app, knex, ready };

@@ -1,6 +1,8 @@
 const request = require('supertest');
 
-const app = require('../../src/index').app;
+const { app, ready } = require('../../src/index');
+
+beforeAll(async () => { await ready; });
 
 describe('Auth API', () => {
   describe('POST /api/auth/login', () => {

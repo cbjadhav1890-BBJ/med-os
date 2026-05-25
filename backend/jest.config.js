@@ -8,4 +8,5 @@ module.exports = {
   testMatch: ['**/*.test.js'],
   verbose: true,
   testTimeout: 10000,
+  maxWorkers: 1,
 };

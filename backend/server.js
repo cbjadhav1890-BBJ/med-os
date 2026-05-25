@@ -4,6 +4,8 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 const express  = require('express');
 const cors     = require('cors');
+const helmet   = require('helmet');
+const rateLimit = require('express-rate-limit');
 const jwt      = require('jsonwebtoken');
 const bcrypt   = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
@@ -14,7 +16,14 @@ const upload   = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5
 
 const app        = express();
 const PORT       = process.env.PORT || 3001;
-const JWT_SECRET = process.env.JWT_SECRET || 'medos-god-mode-secret-2024';
+
+// Enforce secure JWT_SECRET in production
+const ENV_JWT_SECRET = process.env.JWT_SECRET;
+if (process.env.NODE_ENV === 'production' && (!ENV_JWT_SECRET || ENV_JWT_SECRET === 'medos-god-mode-secret-2024' || ENV_JWT_SECRET === 'medos-production-secret-change-me' || ENV_JWT_SECRET === 'medos-local-oracle-postgres-secret-change-before-production')) {
+  console.error('❌ CRITICAL SECURITY ERROR: Secure JWT_SECRET must be configured in production!');
+  process.exit(1);
+}
+const JWT_SECRET = ENV_JWT_SECRET || 'medos-god-mode-secret-2024';
 const ANTHROPIC  = process.env.ANTHROPIC_API_KEY || '';
 
 const knexConfig = process.env.DATABASE_URL
@@ -580,6 +589,57 @@ async function seed() {
 // ══════════════════════════════════════════════════════════════════════════════
 // MIDDLEWARE + HELPERS
 // ══════════════════════════════════════════════════════════════════════════════
+// Security HTTP Headers
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "blob:"],
+    },
+  },
+  hsts: process.env.NODE_ENV === 'production',
+}));
+
+// Rate Limiting
+const limiter = rateLimit({
+  windowMs: process.env.RATE_LIMIT_WINDOW_MS ? parseInt(process.env.RATE_LIMIT_WINDOW_MS) : 15 * 60 * 1000,
+  max: process.env.RATE_LIMIT_MAX_REQUESTS ? parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) : 100,
+  message: { error: 'Too many requests, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/', limiter);
+
+// Brute-force protection for Login
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // 10 attempts max per 15 minutes
+  message: { error: 'Too many login attempts, please try again after 15 minutes' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/auth/login', loginLimiter);
+
+// Additional security headers
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  next();
+});
+
+// Production Request Logger
+app.use((req, res, next) => {
+  req.startTime = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - req.startTime;
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`);
+  });
+  next();
+});
+
 app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000', credentials:true }));
 app.use(express.json({ limit:'10mb' }));
 
@@ -755,6 +815,9 @@ app.get('/api/patients/:id', auth, async (req,res) => {
 app.post('/api/patients', auth, can('reception','admin','doctor','nurse'), async (req,res) => {
   const { name,age,gender,dob,phone,email,address,city,state,pincode,blood_group,allergies,abha_id,emergency_contact_name,emergency_contact_phone,insurance_provider,insurance_policy_no,dpdp_consent,dpdp_purpose } = req.body;
   if (!name||!phone) return res.status(400).json({ error:'Name and phone required' });
+  if (name && (name.includes('<') || name.includes('>'))) {
+    return res.status(400).json({ error: 'Name cannot contain HTML or special characters < and >' });
+  }
   if (age !== undefined && age !== '' && age !== null) {
     const ageNum = Number(age);
     if (isNaN(ageNum) || ageNum < 0 || ageNum > 150) return res.status(400).json({ error:'Age must be between 0 and 150' });
@@ -1131,6 +1194,12 @@ app.post('/api/charges', auth, can('billing','admin'), async (req,res) => {
   const amt  = parseFloat(amount);
   const disc = parseFloat(discount||0);
   const gstR = parseFloat(gst_rate||0);
+
+  if (amt <= 0) return res.status(400).json({ error: 'Amount must be greater than zero' });
+  if (disc < 0) return res.status(400).json({ error: 'Discount cannot be negative' });
+  if (disc > amt) return res.status(400).json({ error: 'Discount cannot exceed amount' });
+  if (gstR < 0 || gstR > 100) return res.status(400).json({ error: 'Invalid GST rate (must be between 0 and 100)' });
+
   const gstA = (amt-disc)*gstR/100;
   const total = amt - disc + gstA;
   const id = uuidv4();
@@ -1700,6 +1769,11 @@ Output these sections:
   } catch (error) {
     res.status(500).json({ error: 'Failed to analyze PDF: ' + error.message });
   }
+});
+
+// Catch-all 404 handler for unknown routes
+app.use((req, res) => {
+  res.status(404).json({ error: 'Endpoint not found' });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
