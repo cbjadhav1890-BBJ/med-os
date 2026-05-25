@@ -79,3 +79,4 @@ echo "To stop all processes, run: pkill -f node"
 echo ""
 echo "Press [Enter] to exit this launcher..."
 read
+
