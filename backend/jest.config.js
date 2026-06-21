@@ -9,4 +9,7 @@ module.exports = {
   verbose: true,
   testTimeout: 10000,
   maxWorkers: 1,
+  transformIgnorePatterns: [
+    'node_modules/(?!(uuid)/)',
+  ],
 };
