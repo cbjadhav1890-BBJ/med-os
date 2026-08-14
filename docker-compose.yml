@@ -28,7 +28,8 @@ services:
       - NODE_ENV=production
       - PORT=3001
       - DATABASE_URL=postgres://postgres:medos123@postgres:5432/medos
-      - JWT_SECRET=${JWT_SECRET:-medos-production-secret-change-me}
+      #- JWT_SECRET=${JWT_SECRET:-medos-production-secret-change-me}
+      - JWT_SECRET=cf9479a43b9f470e3f4be3c1e9d4d31fa156e462b080b283734a92797d783135
       - FRONTEND_URL=http://localhost:3000
     ports:
       - "3001:3001"

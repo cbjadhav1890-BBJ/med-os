@@ -176,6 +176,22 @@ async function setupSchema() {
   const hasEncCol = await knex.schema.hasColumn('appointments', 'encounter_id');
   if (!hasEncCol) await knex.schema.table('appointments', t => t.string('encounter_id'));
 
+  // Fix admissions table — department_id and other columns may be missing in older DBs
+  const hasAdmDept = await knex.schema.hasColumn('admissions', 'department_id');
+  if (!hasAdmDept) await knex.schema.table('admissions', t => t.string('department_id'));
+  const hasAdmNotes = await knex.schema.hasColumn('admissions', 'notes');
+  if (!hasAdmNotes) await knex.schema.table('admissions', t => t.string('notes').defaultTo(''));
+  const hasAdmDisDiag = await knex.schema.hasColumn('admissions', 'discharge_diagnosis');
+  if (!hasAdmDisDiag) await knex.schema.table('admissions', t => t.string('discharge_diagnosis').defaultTo(''));
+  const hasAdmDisSum = await knex.schema.hasColumn('admissions', 'discharge_summary');
+  if (!hasAdmDisSum) await knex.schema.table('admissions', t => t.text('discharge_summary').defaultTo(''));
+  const hasAdmDays = await knex.schema.hasColumn('admissions', 'days_admitted');
+  if (!hasAdmDays) await knex.schema.table('admissions', t => t.integer('days_admitted').defaultTo(0));
+  const hasAdmRoomChg = await knex.schema.hasColumn('admissions', 'room_charges');
+  if (!hasAdmRoomChg) await knex.schema.table('admissions', t => t.float('room_charges').defaultTo(0));
+  const hasAdmUpdated = await knex.schema.hasColumn('admissions', 'updated_at');
+  if (!hasAdmUpdated) await knex.schema.table('admissions', t => t.datetime('updated_at').defaultTo(knex.fn.now()));
+
   // 7. PRESCRIPTIONS
   if (!await has('prescriptions')) await knex.schema.createTable('prescriptions', t => {
     t.string('id').primary();
@@ -1688,7 +1704,7 @@ app.post('/api/reports/test-ai', auth, can('admin'), async (req, res) => {
 app.get('/api/health', async (_,res) => {
   const tables = ['users','patients','encounters','appointments','charges','invoices','payments','medicine_catalog','stock_transactions','admissions','expenses','audit_log','system_settings'];
   const counts = {};
-  for (const t of tables) { const [r] = await knex(t).count('id as c'); counts[t]=r.c; }
+  for (const t of tables) { const [r] = await knex(t).count('* as c'); counts[t]=r.c; }
   res.json({ status:'ok', version:'3.0-god-mode', db:'medos.db', tables:counts, time:new Date().toISOString() });
 });
 
